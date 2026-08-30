@@ -28,8 +28,10 @@ pip install -r requirements.txt
 The DINOv2 weights download automatically on first run; no access request needed.
 
 ```bash
-# Fetch the weights (v3, 35 MB: expert heads and gate only, no backbone)
-hf download kelvinchua/squade-vitg --include "v3/*" --local-dir ckpt
+# Fetch the v3 expert heads and gate
+hf download TechJam2026-Jamlai-Bench/squade-vitg \
+  --include "v3/*" \
+  --local-dir ckpt
 
 # Run over a directory
 python Inference.py --dir /path/to/images \
