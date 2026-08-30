@@ -20,3 +20,9 @@ runs/
 .claude/settings.local.json
 .idea/
 .vscode/
+
+
+# Local agent/development state
+.claude/
+CLAUDE.md
+STATUS.md
