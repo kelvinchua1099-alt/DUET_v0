@@ -273,10 +273,6 @@ with the weights so the split can be verified independently.
 
 ---
 
-## Other documents
+## License
 
-- `CLAUDE.md` — the training pipeline and eight disciplines that fail silently
-- `docs/probe_protocol.md` — run settings for the layer probe
-- `docs/design_experiments.md` — the measurements behind each design decision
-
-MIT. The DINOv2 weights carry their own licence terms.
+MIT. The DINOv2 weights are subject to their own license terms.
