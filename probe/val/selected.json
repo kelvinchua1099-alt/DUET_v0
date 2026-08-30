@@ -1,0 +1,149 @@
+{
+  "layers": {
+    "shallow": 0,
+    "mid": 20,
+    "deep": 24
+  },
+  "layers_list": [
+    0,
+    20,
+    24
+  ],
+  "objective": 0.9840148029240574,
+  "unconstrained": {
+    "layers": [
+      22,
+      24,
+      27
+    ],
+    "objective": 0.9853183534867686
+  },
+  "buckets": {
+    "brighten>0": 145,
+    "clean": 1291,
+    "colorsat>0": 96,
+    "colorshift>0": 115,
+    "darken>0": 154,
+    "downscale>0": 920,
+    "gausblur>0": 100,
+    "impulsenoise>0": 109,
+    "jitter>0": 101,
+    "jpeg>0": 286,
+    "lensblur>0": 101,
+    "lincontrchange>0": 325,
+    "motionblur>0": 97,
+    "multnoise>0": 91,
+    "pixelate>0": 89,
+    "quantization>0": 104,
+    "randomaspectcrop>0": 172,
+    "randomcrop>0": 172,
+    "rgbshift>0": 89,
+    "whitenoise>0": 95,
+    "*shattered": 77,
+    "*smudged": 63
+  },
+  "falsification": {
+    "argmax_per_bucket": {
+      "brighten>0": 26,
+      "clean": 21,
+      "colorsat>0": 24,
+      "colorshift>0": 22,
+      "darken>0": 28,
+      "downscale>0": 24,
+      "gausblur>0": 24,
+      "impulsenoise>0": 20,
+      "jitter>0": 24,
+      "jpeg>0": 25,
+      "lensblur>0": 29,
+      "lincontrchange>0": 26,
+      "motionblur>0": 27,
+      "multnoise>0": 26,
+      "pixelate>0": 22,
+      "quantization>0": 24,
+      "randomaspectcrop>0": 23,
+      "randomcrop>0": 26,
+      "rgbshift>0": 23,
+      "whitenoise>0": 23,
+      "*shattered": 23,
+      "*smudged": 27
+    },
+    "spread": 9,
+    "n_distinct": 10,
+    "n_tied_at_max": {
+      "brighten>0": 1,
+      "clean": 1,
+      "colorsat>0": 1,
+      "colorshift>0": 1,
+      "darken>0": 1,
+      "downscale>0": 1,
+      "gausblur>0": 1,
+      "impulsenoise>0": 1,
+      "jitter>0": 1,
+      "jpeg>0": 1,
+      "lensblur>0": 1,
+      "lincontrchange>0": 1,
+      "motionblur>0": 1,
+      "multnoise>0": 1,
+      "pixelate>0": 1,
+      "quantization>0": 1,
+      "randomaspectcrop>0": 1,
+      "randomcrop>0": 1,
+      "rgbshift>0": 1,
+      "whitenoise>0": 1,
+      "*shattered": 1,
+      "*smudged": 1
+    }
+  },
+  "cache": "/workspace/cache/probe_val",
+  "backbone": "facebook/dinov3-vith16plus-pretrain-lvd1689m",
+  "pool": "cls+mean+std",
+  "taxonomy": "ntireval",
+  "deg_dims": [
+    "downscale",
+    "lincontrchange",
+    "jpeg",
+    "randomcrop",
+    "randomaspectcrop",
+    "darken",
+    "brighten",
+    "impulsenoise",
+    "rgbshift",
+    "colorshift",
+    "gausblur",
+    "pixelate",
+    "whitenoise",
+    "colorsat",
+    "quantization",
+    "lensblur",
+    "multnoise",
+    "motionblur",
+    "jitter"
+  ],
+  "families": {
+    "smudged": [
+      "jpeg",
+      "gausblur",
+      "lensblur",
+      "motionblur",
+      "whitenoise",
+      "impulsenoise",
+      "multnoise",
+      "quantization",
+      "jitter"
+    ],
+    "shattered": [
+      "downscale",
+      "randomcrop",
+      "randomaspectcrop",
+      "pixelate"
+    ],
+    "photometric": [
+      "lincontrchange",
+      "darken",
+      "brighten",
+      "rgbshift",
+      "colorshift",
+      "colorsat"
+    ]
+  }
+}

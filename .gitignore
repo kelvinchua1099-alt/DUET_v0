@@ -1,0 +1,22 @@
+# 环境
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 数据与产物 —— 体积大且可由脚本重建
+data/
+cache/
+runs/
+*.npy
+*.pt
+*.pth
+*.ckpt
+
+# 本机专属
+.DS_Store
+.claude/settings.local.json
+.idea/
+.vscode/

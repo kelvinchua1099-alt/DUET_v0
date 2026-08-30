@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m py_compile training/classifier.py)",
+      "Bash(sort -k2)",
+      "Bash(python3 -m py_compile training/experts_mlp.py)",
+      "Bash(python3 training/experts_mlp.py)",
+      "Bash(sed -n '/汇总/,$p' /private/tmp/claude-501/-Users-acven-Desktop-SQuaDE/e7f53396-914d-41f2-aaa9-520076d27586/scratchpad/blk_ab.log)"
+    ]
+  }
+}

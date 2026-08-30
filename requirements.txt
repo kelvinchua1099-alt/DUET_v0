@@ -1,0 +1,50 @@
+# SQuaDE 运行依赖
+#
+# 实测环境:Python 3.13.11 / macOS 15.6 (Apple Silicon, MPS)
+# 下面的版本号是跑通过的组合;上界都是有具体原因的,不要随手放开。
+#
+# ---------------------------------------------------------------------------
+# 装完还要做一步 pip 管不了的事:DINOv3 是 gated repo
+#
+#   1. 到 https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m
+#      点同意协议
+#   2. hf auth login          (或设环境变量 HF_TOKEN)
+#
+#   没做的话 from_pretrained 会报 401 / GatedRepoError,
+#   而不是「网络不好」之类容易误判的错误。
+# ---------------------------------------------------------------------------
+
+# 实测 2.9.1。macOS 上的下界由 bf16-on-MPS 支持决定(见 models/dinov3.py 纪律 5:
+# ViT-H+ 深层激活峰值 34720,fp16 上限 65504,余量仅 1.9 倍,必须用 bf16)。
+torch>=2.4,<3
+
+# 不是可选的。transformers 的 DINOv3ViTImageProcessorFast 声明
+# @requires(backends=("torchvision", "torch")),缺了它 AutoImageProcessor 直接失败。
+torchvision>=0.18
+
+# 4.57.6 实测通过。上界锁 <5:5.x 是大版本跳跃,本项目依赖 modeling_dinov3_vit 的
+# 具体行为(hidden_states 未过 final norm、tie_last_hidden_states=False、
+# token 布局 [CLS|registers|patches]),不确认过不要升。
+transformers>=4.57,<5
+
+# **这一条最容易踩坑。** transformers 4.x 硬约束 huggingface-hub>=0.34.0,<1.0。
+# 直接 `pip install -U huggingface_hub[cli]` 会装到 1.x,然后 import transformers
+# 当场 ImportError。装 CLI 请用:pip install "huggingface_hub[cli]<1.0"
+huggingface-hub>=0.34,<1.0
+
+numpy>=1.24,<3
+pillow>=10.0
+tqdm>=4.65
+
+# ---------------------------------------------------------------------------
+# 刻意不依赖的东西,别装:
+#
+#   accelerate  —— 只有 device_map="auto" 需要它,本项目用 .to(device),不需要
+#   scikit-learn —— AUC 用秩法手写(train_WeightandExpert.py / probe_layers.py),
+#                   为一个函数引入 sklearn 不值得
+#   pandas / pyarrow —— meta 与 manifest 都用 CSV。5 万行 CSV 也就几 MB,还能直接 grep
+#   opencv       —— 退化算子全部用 PIL 实现
+#
+# 画 Figure 2(层级热力图)时再按需装,probe_layers.py 本身只输出 CSV 和文本:
+#   matplotlib>=3.7
+# ---------------------------------------------------------------------------
