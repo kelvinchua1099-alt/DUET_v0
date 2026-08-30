@@ -57,7 +57,7 @@ Because a clean-versus-generator comparison is comparatively easy, we report our
 ```bash
 git clone https://github.com/kelvinchua1099-alt/DUET_v0.git
 cd DUET_v0
-
+pip install -r requirements.txt
 hf download TechJam2026-Jamlai-Bench/squade-vitg \
   --include "v3/*" --local-dir ckpt
 ```
