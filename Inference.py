@@ -1,10 +1,11 @@
 """SQuaDE 推理 —— 门控两组专家,干净图在 L27 提前退出。
+SQuaDE inference -- two gated expert banks with early exit at L27 for clean inputs.
 
     python Inference.py --dir /path/to/images \
         --shallow runs/mix_shallow --deep runs/mix_deep --gate runs/mix_gate.pt \
         --out preds.csv
 
-    # 单图
+    # 单图 / Single image
     python Inference.py --image a.jpg --shallow ... --deep ... --gate ...
 
 Output CSV: image, verdict(FAKE/REAL), confidence(0-100), score, label(0/1),
@@ -20,7 +21,7 @@ latter matters because the bank averages logits uniformly, so a single saturated
 expert can outvote the other two while `score` still reads 1.000000.
 
 ---------------------------------------------------------------------------
-两组专家 + 门
+两组专家 + 门 / Two expert banks + gate
 
     输入 → DINOv2 ViT-g(冻结)
              ├─ 跑到 L27,取 L14/L21/L27 → 浅组三专家均匀平均 → z_shallow
@@ -28,15 +29,28 @@ expert can outvote the other two while `score` still reads 1.000000.
              │        g 判"干净" → 直接输出 z_shallow,**在这里停止**,省掉 L28~L37
              └─ g 判"退化" → 继续跑到 L37,取 L26/L33/L37 → 深组 → z_deep
 
+    Input → frozen DINOv2 ViT-g
+             ├─ run to L27; tap L14/L21/L27 → shallow experts → z_shallow
+             │                                → gate g from the same shallow features
+             │        g predicts "clean" → return z_shallow and stop at L27
+             └─ g predicts "degraded" → resume to L37; tap L26/L33/L37 → z_deep
+
 门读的是**浅组的特征**,这一点是架构上的关键:它必须在提前退出点之前就能算出来。
 门若改读深层特征,就必须先跑完全深度,提前退出的收益整个消失。
+The gate must read shallow features so it is available before the exit point. A gate that
+depends on deep features would require full-depth execution and eliminate the saving.
 
-实测(28 万模型,官方 val):省 19.7% 前向深度,robust AUC 不降反升。
-但在**原生低分辨率**来源上门会失效(把 82% 的图判成退化,省下的算力掉到 5.8%),
+早退样本相对 L37 路线少跑 10 个 block;程序会按实际路由率报告平均节省。
+但在**原生低分辨率**来源上门会失效(把 82% 的图判成退化),
 因为它学到的实际是"图糊不糊"而不是"有没有施加过退化算子"。
+Each early-exited sample skips 10 blocks relative to the L37 route; the runtime summary
+reports the average saving from the observed routing rate. The gate is less reliable on
+native low-resolution sources because it can learn blur rather than applied degradation.
 
 ---------------------------------------------------------------------------
-预处理必须与训练完全一致,否则等于给测试集加一层没记录的域偏移
+预处理必须与训练完全一致,否则等于给测试集加一层没记录的域偏移。
+Preprocessing must exactly match training; otherwise inference introduces an undocumented
+domain shift.
 
     短边 >= 512   **中心裁 512x512,一次重采样都不做**
                   —— 保住原生高频(生成器指纹住在那里),也消除"缩放倍率"这条捷径
@@ -44,7 +58,12 @@ expert can outvote the other two while `score` still reads 1.000000.
                   内核池 [BILINEAR, BICUBIC, BOX, LANCZOS],按图确定性挑
                   —— 固定一个内核的话,"这张图带哪种插值痕迹"会变成一条与内容无关的线索
 
+    short side >= 512  center-crop to 512x512 without resampling
+    short side <  512  square-crop, then upsample to 512 using a deterministic per-image
+                       choice from [BILINEAR, BICUBIC, BOX, LANCZOS]
+
 然后喂给 backbone 时 **crop 到 504**(DINOv2 patch=14 的整数倍),同样不 resize。
+Before the backbone, crop to 504 (a multiple of DINOv2 patch size 14) without resizing.
 """
 from __future__ import annotations
 
@@ -65,8 +84,8 @@ from models.dinov3 import DINOv3Backbone                        # noqa: E402
 from models.experts_mlp import ExpertBank                       # noqa: E402
 from utils.preprocess import INTERP_POOL, normalize, rng_for    # noqa: E402
 
-CONF_MARGIN_SCALE = 8.0    # logit 单位;|margin| 到这个量级 confidence 才接近饱和
-CONF_SPREAD_SCALE = 60.0   # 三专家 logit 极差到这个量级,置信度衰减到 1/e
+CONF_MARGIN_SCALE = 8.0    # logit 单位 / logit units; confidence nears saturation here
+CONF_SPREAD_SCALE = 60.0   # 三专家极差 / expert-logit range giving 1/e decay
 
 
 def _sigmoid(x):
@@ -76,7 +95,10 @@ def _sigmoid(x):
 def confidence(z: float, expert_logits, threshold: float) -> float:
     """0-100 可靠度指数(不是概率)。两个来源都会把它压低:
     离阈值近(margin 小)、三个专家意见分裂(极差大)。后者是关键 ——
-    均匀 logit 平均下,单个饱和专家能压过另外两票,而 score 仍然显示 1.000000。"""
+    均匀 logit 平均下,单个饱和专家能压过另外两票,而 score 仍然显示 1.000000。
+
+    Uncalibrated 0-100 reliability index, not a probability. It decreases near the
+    decision threshold or when the three expert logits disagree."""
     margin = float(z) - float(threshold)
     spread = float(np.max(expert_logits) - np.min(expert_logits))
     return 100.0 * math.tanh(abs(margin) / CONF_MARGIN_SCALE) * math.exp(-spread / CONF_SPREAD_SCALE)
@@ -86,17 +108,19 @@ SHALLOW_LAYERS = [14, 21, 27]
 DEEP_LAYERS = [26, 33, 37]
 FIELDS = ["image", "verdict", "confidence", "score", "label", "route", "experts",
           "votes", "vote_spread", "depth_used", "gate_logit", "ms_per_img"]
-EXIT_DEPTH, FULL_DEPTH = 27, 37        # 提前退出点 / 完整深度(总 40 个 block)
+EXIT_DEPTH, FULL_DEPTH = 27, 37        # 早退/部署深度 / exit/deployed full depth
 
 
 def pick_kernel(name: str):
-    """按图名确定性地挑一个上采样内核 —— 与训练时 --interp random 同一套逻辑。"""
+    """按图名确定性地挑一个上采样内核;
+    deterministically select the same per-image kernel policy used in training."""
     r = rng_for(0, name + "|interp")
     return INTERP_POOL[int(r.integers(len(INTERP_POOL)))]
 
 
 def load_image(p: Path, size: int = 512) -> Image.Image:
-    """短边 >=size 中心裁不重采样;<size 裁正方后随机内核上采样。"""
+    """短边 >=size 中心裁不重采样;<size 裁正方后按图选内核上采样。
+    Center-crop large images without resampling; square-crop and upsample small ones."""
     with Image.open(p) as im:
         im = im.convert("RGB")
         kernel = pick_kernel(p.name) if min(im.size) < size else None
@@ -104,7 +128,8 @@ def load_image(p: Path, size: int = 512) -> Image.Image:
 
 
 class SQuaDE:
-    """门控两组专家 + 真正的提前退出。"""
+    """门控两组专家 + 真正的提前退出。
+    Two gated expert banks with true staged early-exit execution."""
 
     def __init__(self, shallow_run, deep_run, gate_path, model, crop=504, device="cuda",
                  allow_mismatch=False):
@@ -128,14 +153,17 @@ class SQuaDE:
                        dropout=ck["cfg"]["dropout"])
         b.load_state_dict(ck["bank"])
         b.to(self.dev).freeze_experts()
-        # cache_cfg 记录了特征缓存是用什么骨干/精度/窗口算出来的 —— 专家的权重与
-        # 标准化 buffer 都在那个分布上标定,运行时对不上就是分布外输入。
+        # cache_cfg 记录骨干/精度/窗口;对不上会给专家喂入分布外特征。
+        # cache_cfg records backbone/precision/window; a mismatch feeds OOD features to heads.
         self._cache_cfgs.append((str(run), ck["cfg"].get("cache_cfg") or {}))
         return b
 
     def _check_runtime(self, allow_mismatch=False):
         """比对 checkpoint 记录的缓存配置与当前运行时。不一致会静默给出错误结论:
-        实测同一张图 bf16 融合 logit -0.10(FAKE)、fp32 -29.53(REAL),不报任何错。"""
+        实测同一张图 bf16 融合 logit -0.10(FAKE)、fp32 -29.53(REAL),不报任何错。
+
+        Compare checkpoint cache metadata with runtime settings; a mismatch can silently
+        flip predictions because the expert heads receive out-of-distribution features."""
         want = {"dtype": str(self.bb.dtype), "backbone": self.bb.name,
                 "crop_size": self.crop}
         bad = []
@@ -160,40 +188,59 @@ class SQuaDE:
 
     @staticmethod
     def _pack(feats, layers, dev):
-        """{layer: entry} -> (B,3,3H) 与 (B,3,2),顺序按 layers 给定。"""
+        """{layer: entry} -> (B,3,3H) 与 (B,3,2),按 layers 排序。
+        Pack layer entries in the requested order."""
         f = torch.stack([DINOv3Backbone.pool(feats[l]) for l in layers], 1).to(dev, torch.float32)
         p = torch.stack([feats[l]["prenorm_stats"] for l in layers], 1).to(dev, torch.float32)
         return f, p
 
     @torch.no_grad()
-    def predict(self, imgs, names):
-        # 预处理器每张返回 (1,3,H,W),要 cat 不是 stack —— stack 会多出一维
+    def predict(self, imgs, names, no_early_exit=False):
+        # 预处理器每张返回 (1,3,H,W),要 cat 不是 stack —— stack 会多出一维。
+        # Each preprocessed image has shape (1,3,H,W); concatenate rather than stack it.
         x = torch.cat([self.prep(im, image_id=n) for im, n in zip(imgs, names)])
 
-        # ① 只跑到 L27。门与浅组都读这一段的特征,所以判"干净"时后面 13 个 block 根本不跑。
+        # ① 只跑到 L27。门与浅组都读这一段的特征,所以判"干净"时可在这里停止。
+        # ① Run only to L27. Both the gate and shallow bank use these features, so clean
+        # samples can stop here.
         f1, hid = self.bb.forward_blocks(x, layers=SHALLOW_LAYERS + [DEEP_LAYERS[0]],
                                          max_block=EXIT_DEPTH)
         fs, ps = self._pack(f1, SHALLOW_LAYERS, self.dev)
         zs, ps_parts = self.shallow(fs, ps, return_parts=True)
-        votes = ps_parts["expert_logits"].clone()          # (B,3) 组内三个专家各自的 logit
+        # (B,3) 组内三个专家各自的 logit / logits from the three experts.
+        votes = ps_parts["expert_logits"].clone()
         gz = self.gate((fs.reshape(len(imgs), -1) - self.g_mu) / self.g_sd).squeeze(-1)
         clean = gz <= 0
 
         z = zs.clone()
-        n_deep = int((~clean).sum())
-        if n_deep:
-            # ② 只有被判为退化的图才继续跑 L28~L37,而且从 L27 的 hidden 接着跑,不重跑前面
-            sel = (~clean).nonzero(as_tuple=True)[0]
+        deep_sel = (~clean).nonzero(as_tuple=True)[0]
+
+        # 默认只让 deep 路由样本继续运行;验证模式下让整个 batch 都运行到 L37。
+        # By default only deep-routed samples continue. Verification mode runs every sample
+        # to L37 while preserving the gate-selected final output.
+        run_sel = (torch.arange(len(imgs), device=clean.device)
+                   if no_early_exit else deep_sel)
+
+        if len(run_sel):
+            # ② 从 L27 的 hidden state 继续跑 L28~L37,不重复计算前 27 层。
+            # ② Resume from the L27 hidden state and run L28-L37 without recomputing L1-L27.
             f2, _ = self.bb.forward_blocks(None, layers=DEEP_LAYERS[1:], max_block=FULL_DEPTH,
-                                           resume=hid[sel], start_block=EXIT_DEPTH)
-            f2[DEEP_LAYERS[0]] = {k: (v[sel] if torch.is_tensor(v) else v)
+                                           resume=hid[run_sel], start_block=EXIT_DEPTH)
+            f2[DEEP_LAYERS[0]] = {k: (v[run_sel] if torch.is_tensor(v) else v)
                                   for k, v in f1[DEEP_LAYERS[0]].items()}
             fd, pd = self._pack(f2, DEEP_LAYERS, self.dev)
             zd, pd_parts = self.deep(fd, pd, return_parts=True)
-            z[sel] = zd
-            votes[sel] = pd_parts["expert_logits"]
-        # 一律返回裸 logit:阈值与 confidence 都必须在 logit 空间算,
-        # sigmoid 在两端饱和,过早转换会把判据本身丢掉。
+
+            # zd 使用 run_sel 的局部行号;只有真正路由到 deep 的样本采用 deep 输出。
+            # zd uses run_sel-local indices; only genuinely deep-routed samples adopt it.
+            use_local = (~clean[run_sel]).nonzero(as_tuple=True)[0]
+            use_global = run_sel[use_local]
+            z[use_global] = zd[use_local]
+            votes[use_global] = pd_parts["expert_logits"][use_local]
+
+        # 一律返回裸 logit:阈值与 confidence 都必须在 logit 空间计算。
+        # Return raw logits because thresholding and confidence must stay in logit space;
+        # sigmoid saturation would otherwise discard the decision margin.
         return (z.cpu().numpy(), clean.cpu().numpy(),
                 gz.cpu().numpy(), votes.cpu().numpy())
 
@@ -239,7 +286,8 @@ def main(argv=None) -> int:
         raise SystemExit("no images found")
     total_found = len(paths)
 
-    if a.shard:                                    # 分片必须在过滤之前,且 paths 已排序
+    # 分片必须在过滤之前,且 paths 已排序 / Shard the sorted list before filtering.
+    if a.shard:
         i, nsh = (int(x) for x in a.shard.split("/"))
         if not 0 <= i < nsh:
             raise SystemExit(f"--shard {a.shard}: need 0 <= I < N")
@@ -261,7 +309,8 @@ def main(argv=None) -> int:
     net = SQuaDE(a.shallow, a.deep, a.gate, a.model, a.crop_size, a.device,
                  allow_mismatch=a.allow_mismatch)
 
-    # 流式写盘:大规模跑时中途被杀也不会丢已算完的部分。追加模式仅在续传时使用。
+    # 流式写盘以保留已完成批次;只有续传时才追加。
+    # Stream completed batches to disk; append only when resuming an existing output.
     fh = writer = None
     if a.out:
         append = bool(done)
@@ -271,14 +320,16 @@ def main(argv=None) -> int:
             writer.writeheader()
 
     import time
-    # 只累计汇总所需的量,不把全部行留在内存 —— 百万张时 rows 会吃掉几百 MB
+    # 只累计汇总所需的量,避免百万行结果常驻内存。
+    # Retain only summary state instead of keeping millions of output rows in memory.
     head, confs, n_exit, n_fake, n_done, t_total = [], [], 0, 0, 0, 0.0
     failed = []
     t_start = time.perf_counter()
     for k in range(0, len(paths), a.batch_size):
         raw = paths[k : k + a.batch_size]
         imgs, chunk = [], []
-        for p in raw:                              # 逐图容错:坏文件跳过,不拖垮整跑
+        # 逐图容错:坏文件跳过,不拖垮整跑 / Skip unreadable files individually.
+        for p in raw:
             try:
                 imgs.append(load_image(p)); chunk.append(p)
             except Exception as e:
@@ -287,14 +338,16 @@ def main(argv=None) -> int:
         if not imgs:
             continue
         t0 = time.perf_counter()
-        zlog, cl, gz, vlog = net.predict(imgs, [p.name for p in chunk])
+        zlog, cl, gz, vlog = net.predict(
+            imgs, [p.name for p in chunk], no_early_exit=a.no_early_exit
+        )
         dt = time.perf_counter() - t0
         t_total += dt
         n_exit += int(cl.sum())
         for q, zl, c, g, v in zip(chunk, zlog, cl, gz, vlog):
             grp = SHALLOW_LAYERS if c else DEEP_LAYERS
             is_fake = bool(zl > a.threshold)
-            vp = _sigmoid(v)                       # 仅用于展示的每专家概率
+            vp = _sigmoid(v)  # 仅用于展示的专家概率 / display-only expert probabilities
             row = ({"image": str(q),
                          "verdict": "FAKE" if is_fake else "REAL",
                          "confidence": f"{confidence(zl, v, a.threshold):.1f}",
@@ -302,10 +355,11 @@ def main(argv=None) -> int:
                          "label": int(is_fake),
                          "route": "shallow" if c else "deep",
                          "experts": "/".join(f"L{l}" for l in grp),
-                         # 每个专家各自的概率 —— 三票分歧会把 confidence 拉下来
+                         # 三票分歧会降低 confidence / expert disagreement lowers confidence.
                          "votes": "|".join(f"{x:.3f}" for x in vp),
                          "vote_spread": f"{float(vp.max() - vp.min()):.3f}",
-                         "depth_used": EXIT_DEPTH if c else FULL_DEPTH,
+                         "depth_used": (FULL_DEPTH if a.no_early_exit else
+                                        (EXIT_DEPTH if c else FULL_DEPTH)),
                          "gate_logit": f"{g:.4f}",
                          "ms_per_img": f"{dt / len(chunk) * 1000:.1f}"})
             n_done += 1
@@ -316,7 +370,7 @@ def main(argv=None) -> int:
             if writer:
                 writer.writerow(row)
         if writer:
-            fh.flush()                             # 每批落盘,被杀也只丢当前批
+            fh.flush()  # 每批落盘,中断时只丢当前批 / flush every batch
         if (k // a.batch_size) % 20 == 0:
             seen = min(k + a.batch_size, len(paths))
             el = time.perf_counter() - t_start
@@ -330,13 +384,20 @@ def main(argv=None) -> int:
         print(f"\nno image could be read ({len(failed)} failed)")
         if fh: fh.close()
         return 1
-    saved = n_exit / n_done * (1 - EXIT_DEPTH / 40)
+    # 相对于部署时完整的 L37 路线计算额外早退节省。
+    # Report incremental early-exit savings relative to the deployed full L37 route.
+    saved = (0.0 if a.no_early_exit else
+             n_exit / n_done * (FULL_DEPTH - EXIT_DEPTH) / FULL_DEPTH)
     print(f"\nDecision threshold: fused logit > {a.threshold:+g} (logit space)")
-    print(f"Routed shallow (early exit taken): {n_exit}/{n_done} = "
+    print(f"Gate selected shallow route: {n_exit}/{n_done} = "
           f"{n_exit / n_done * 100:.1f}%")
-    print(f"Forward depth saved by early exit: {saved * 100:.1f}%  "
-          f"(clean images stop at L{EXIT_DEPTH}, skipping "
-          f"L{EXIT_DEPTH + 1}-L{FULL_DEPTH}, 13/40 blocks)")
+    if a.no_early_exit:
+        print(f"Forward depth saved by early exit: 0.0%  "
+              f"(--no-early-exit: every image ran to L{FULL_DEPTH})")
+    else:
+        print(f"Forward depth saved by early exit: {saved * 100:.1f}%  "
+              f"(shallow-routed images stop at L{EXIT_DEPTH} instead of L{FULL_DEPTH}, "
+              f"saving {FULL_DEPTH - EXIT_DEPTH}/{FULL_DEPTH} blocks on those images)")
     print(f"Verdict: FAKE {n_fake}/{n_done}   REAL {n_done - n_fake}/{n_done}")
     print(f"\nTime: {t_total:.2f} s total, {t_total / n_done * 1000:.1f} ms/image, "
           f"{n_done / t_total:.1f} images/s")
