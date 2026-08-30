@@ -3,12 +3,18 @@ SQuaDE inference -- two gated expert banks with early exit at L27 for clean inpu
 
     python Inference.py --dir /path/to/images \
         --shallow runs/mix_shallow --deep runs/mix_deep --gate runs/mix_gate.pt \
-        --out preds.csv
+        --json preds.json --out preds.csv
 
     # 单图 / Single image
     python Inference.py --image a.jpg --shallow ... --deep ... --gate ...
 
-Output CSV: image, verdict(FAKE/REAL), confidence(0-100), score, label(0/1),
+--json 是**提交格式**:[{"image_path": str, "pred": float in [0,1]}, ...],pred 越大越像
+AI 生成。它不是 sigmoid(z) 而是以阈值居中、除以温度的 sigmoid —— 理由见 pred_score 的
+docstring(一句话:裸 sigmoid 在 |z|>40 上并列成 1.000000,把排序信息丢光,AUC 白掉)。
+--json writes the submission format: a list of {"image_path", "pred"}, pred in [0,1] and
+higher means more likely AI-generated. See pred_score for why it is not plain sigmoid(z).
+
+Output CSV: image, pred, verdict(FAKE/REAL), confidence(0-100), score, label(0/1),
             route(shallow/deep), depth_used, gate_logit
 The verdict comes from a **logit-space** threshold (--threshold, default -8.7).
 `confidence` is an uncalibrated 0-100 reliability index, NOT a probability:
@@ -69,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import sys
 from pathlib import Path
@@ -86,6 +93,7 @@ from utils.preprocess import INTERP_POOL, normalize, rng_for    # noqa: E402
 
 CONF_MARGIN_SCALE = 8.0    # logit 单位 / logit units; confidence nears saturation here
 CONF_SPREAD_SCALE = 60.0   # 三专家极差 / expert-logit range giving 1/e decay
+PRED_TEMPERATURE = 20.0    # `pred` 的温度 / temperature for `pred`; see pred_score
 
 
 def _sigmoid(x):
@@ -104,9 +112,34 @@ def confidence(z: float, expert_logits, threshold: float) -> float:
     return 100.0 * math.tanh(abs(margin) / CONF_MARGIN_SCALE) * math.exp(-spread / CONF_SPREAD_SCALE)
 
 
+def pred_score(z: float, threshold: float) -> float:
+    """0-1 的「这张图是 AI 生成的」分数 —— 提交用的那一列。
+    0-1 likelihood that the image is AI-generated -- the submission column.
+
+    不是 sigmoid(z),而是 **以阈值为中心、加温度** 的 sigmoid:
+    Not sigmoid(z), but a sigmoid centred on the threshold and divided by a temperature:
+
+        pred = sigmoid((z - threshold) / PRED_TEMPERATURE)
+
+    两个理由,都只关乎可用性,不改变判决:
+      * 单调于 z,所以 AUC 与直接用 z 排序完全相同,且 pred > 0.5 恰好等价于
+        verdict == FAKE(裸 sigmoid 的 0.5 对应 z=0,与 -8.7 的阈值对不上);
+      * 裸 sigmoid(z) 在 |z| > 40 时数值上饱和成 0.0 / 1.0 —— 本模型的 logit
+        常到 ±100,于是绝大多数行并列在 1.000000,排序信息全丢,AUC 被并列拖垮。
+        除以温度把它拉回可分辨的区间。
+
+    Both reasons concern usability only; neither changes the verdict. It is monotone in z,
+    so AUC matches ranking by the raw logit, and pred > 0.5 is exactly verdict == FAKE.
+    Plain sigmoid(z) saturates numerically to 0.0/1.0 beyond |z| > 40, and this model's
+    logits routinely reach +/-100, so most rows would tie at 1.000000 and the ranking
+    information -- hence the AUC -- would be lost.
+    """
+    return float(_sigmoid((float(z) - float(threshold)) / PRED_TEMPERATURE))
+
+
 SHALLOW_LAYERS = [14, 21, 27]
 DEEP_LAYERS = [26, 33, 37]
-FIELDS = ["image", "verdict", "confidence", "score", "label", "route", "experts",
+FIELDS = ["image", "pred", "verdict", "confidence", "score", "label", "route", "experts",
           "votes", "vote_spread", "depth_used", "gate_logit", "ms_per_img"]
 EXIT_DEPTH, FULL_DEPTH = 27, 37        # 早退/部署深度 / exit/deployed full depth
 
@@ -265,6 +298,11 @@ def main(argv=None) -> int:
     ap.add_argument("--gate", required=True)
     ap.add_argument("--model", default="facebook/dinov2-giant")
     ap.add_argument("--out", default=None, help="write CSV here; prints to stdout if omitted")
+    ap.add_argument("--json", default=None, metavar="PATH",
+                    help="also write the submission JSON here: a list of "
+                         '{\"image_path\": str, \"pred\": float in [0,1]}. '
+                         "Written once at the end of the run; with --resume it is "
+                         "rebuilt from the whole --out CSV, not just this run's rows")
     ap.add_argument("--resume", action="store_true",
                     help="skip images already present in --out and append to it. "
                          "Makes a killed run restartable with the same command")
@@ -336,6 +374,8 @@ def main(argv=None) -> int:
     # 只累计汇总所需的量,避免百万行结果常驻内存。
     # Retain only summary state instead of keeping millions of output rows in memory.
     head, confs, n_exit, n_fake, n_done, t_total = [], [], 0, 0, 0, 0.0
+    json_rows = []                                 # 仅 --json 且没有 --out 时才用得上
+                                                   # only used when --json without --out
     failed = []
     t_start = time.perf_counter()
     for k in range(0, len(paths), a.batch_size):
@@ -362,6 +402,9 @@ def main(argv=None) -> int:
             is_fake = bool(zl > a.threshold)
             vp = _sigmoid(v)  # 仅用于展示的专家概率 / display-only expert probabilities
             row = ({"image": str(q),
+                         # 提交列:阈值居中 + 温度的概率,单调于 z,不并列
+                         # submission column: threshold-centred, tempered, no ties
+                         "pred": f"{pred_score(zl, a.threshold):.6f}",
                          "verdict": "FAKE" if is_fake else "REAL",
                          "confidence": f"{confidence(zl, v, a.threshold):.1f}",
                          "score": f"{float(_sigmoid(zl)):.6f}",
@@ -380,6 +423,10 @@ def main(argv=None) -> int:
             confs.append(float(row["confidence"]))
             if len(head) < 20:
                 head.append(row)
+            # 有 CSV 时统一从 CSV 重建,避免两份真相 / rebuild from the CSV when there is one
+            if a.json and not a.out:
+                json_rows.append({"image_path": row["image"],
+                                  "pred": float(row["pred"])})
             if writer:
                 writer.writerow(row)
         if writer:
@@ -445,6 +492,24 @@ def main(argv=None) -> int:
                   f"{r['confidence']:>5}  {r['route']:<8} {r['experts']:<14} {r['votes']}")
         if n_done > len(head):
             print(f"  ... {n_done} rows total; use --out to write a CSV")
+
+    if a.json:
+        # 从 CSV 重建(若有):这样 --resume / 崩溃续跑之后,JSON 覆盖的是全部行,
+        # 而不只是本次进程算出来的那部分。
+        # Rebuilding from the CSV keeps the JSON complete across --resume and crashes.
+        if a.out and Path(a.out).exists():
+            with open(a.out, newline="", encoding="utf-8") as jfh:
+                # `pred` 是后加的列;续跑到一份旧 CSV 上时退回 score,别整跑崩掉
+                # `pred` is a newer column; fall back to `score` on a pre-existing CSV
+                json_rows = [{"image_path": r["image"],
+                              "pred": float(r.get("pred") or r["score"])}
+                             for r in csv.DictReader(jfh)]
+        # 读不出来的文件也要占一行,否则 JSON 的条数与图片目录对不上。0.5 = 不表态。
+        # Unreadable files still get a row (0.5 = abstain) so the count matches the directory.
+        json_rows += [{"image_path": str(q), "pred": 0.5} for q, _ in failed]
+        with open(a.json, "w", encoding="utf-8") as jfh:
+            json.dump(json_rows, jfh, indent=2, ensure_ascii=False)
+        print(f"-> {a.json}  ({len(json_rows)} row(s))")
     return 0
 
 
