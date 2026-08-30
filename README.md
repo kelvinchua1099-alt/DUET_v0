@@ -21,9 +21,33 @@ input → DINOv2 ViT-g (frozen, 40 blocks)
 
 ## Results
 
-All numbers are **held-out**. 70% of the official val set and 70% of val_hard were used in
-training; the split files ship with the weights (`v3/val_split_70_30.json`,
-`v3/valhard_split_70_30.json`) so the split can be verified independently.
+All numbers are **held-out**. 70% of the official val set and 70% of val_hard were used in training; the split files ship with the weights (`v3/val_split_70_30.json`, `v3/valhard_split_70_30.json`) so the split can be verified independently.
+
+### Cross-dataset check — COCO vs. DALL·E 3 (13,841 images)
+
+We first verified that the early-exit gate does not degrade predictions on a large out-of-distribution set: 4,998 real COCO photographs and 8,843 DALL·E 3 generations, each image run under both schemes.
+
+| Scheme | ROC-AUC | Overall accuracy | Balanced accuracy |
+|---|---|---|---|
+| Early exit | 0.99719648 | 97.60% | 96.86% |
+| Full depth | 0.99719655 | 97.60% | 96.86% |
+
+The two schemes differ by **0.000000068 AUC** — early exit produced no measurable performance loss. Bootstrap 95% CI for the early-exit AUC: **0.99634–0.99795**.
+
+| Dataset | Scheme | Correct | Accuracy | Shallow route | Mean depth | Latency |
+|---|---|---|---|---|---|---|
+| COCO (real) | Early | 4,708 / 4,998 | 94.20% | 18.43% | 35.16 | 23.09 ms |
+| COCO (real) | Full | 4,708 / 4,998 | 94.20% | 18.43% | 37.00 | 24.22 ms |
+| DALL·E 3 (fake) | Early | 8,801 / 8,843 | 99.53% | 84.33% | 28.57 | 19.39 ms |
+| DALL·E 3 (fake) | Full | 8,801 / 8,843 | 99.53% | 84.33% | 37.00 | 24.06 ms |
+
+Error composition: 290 real COCO photographs flagged as fake (**FPR 5.80%**) and 42 DALL·E 3 images missed (**FNR 0.47%**), for 13,509 / 13,841 correct overall (**97.60%**).
+
+The routing split is informative in itself: 84% of DALL·E 3 images take the shallow branch while only 18% of COCO photographs do. This matches how the two sets were produced — generator output is delivered as clean PNG, whereas COCO photographs have already been compressed and resized. The gate is reading the processing history, which is exactly what it was trained to do.
+
+### Primary evaluation — NTIRE official splits
+
+Because a clean-versus-generator comparison is comparatively easy, we report our main results on the NTIRE official val and val_hard splits. These apply the competition's own degradation pipeline, which includes transformations our six training operators do not fully cover — so they measure behaviour under realistic distribution shift rather than under degradations we designed ourselves.
 
 | Data | Scheme | Overall | Clean | Degraded |
 |---|---|---|---|---|
@@ -34,20 +58,11 @@ training; the split files ship with the weights (`v3/val_split_70_30.json`,
 
 "Degraded" is the competition's headline metric.
 
-**Uniform fusion beats the best single expert** by +3.39 / +1.67 points (shallow / deep) on
-official val, and +5.89 / +1.74 on the hard split. The experts are not making identical
-errors — averaging their logits reduces variance.
+**Uniform fusion beats the best single expert** by +3.39 / +1.67 points (shallow / deep) on official val, and +5.89 / +1.74 on the hard split. The experts are not making identical errors — averaging their logits reduces variance.
 
-**Early exit costs nothing.** Staged inference is numerically identical to a full forward
-pass (max absolute difference = 0 across all six taps). On the official val set the gate
-marks ~60% of images clean, for a measured **19.7% reduction in forward depth**. ⚠️
+**Early exit costs nothing.** Staged inference is numerically identical to a full forward pass (max absolute difference = 0 across all six taps). On the official val set the gate marks ~60% of images clean, for a measured **19.7% reduction in forward depth**.
 
-**We did not hand-pick the tap layers.** A linear probe was fitted to every block, candidate
-triples were scored by rank-averaged AUC, and a permutation test checked them against
-randomly constructed alternatives.
-
----
-
+**We did not hand-pick the tap layers.** A linear probe was fitted to every block, candidate triples were scored by rank-averaged AUC, and a permutation test checked them against randomly constructed alternatives.
 ## Quick start
 
 ```bash
