@@ -21,8 +21,8 @@ input → DINOv2 ViT-g (frozen, 40 blocks)
 ## Quick start
 
 ```bash
-git clone https://github.com/kelvinchua1099-alt/SQuaDE && cd SQuaDE
-pip install -r requirements.txt
+git clone https://github.com/kelvinchua1099-alt/DUET_v0.git
+cd DUET_v0
 ```
 
 The DINOv2 weights download automatically on first run; no access request needed.
