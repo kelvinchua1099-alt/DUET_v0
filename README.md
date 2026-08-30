@@ -1,11 +1,7 @@
 # DUET — Depth-Uniform Ensemble with early Termination
+<img width="1536" height="1024" alt="main" src="https://github.com/user-attachments/assets/3dba46aa-3b0f-456d-860d-f8d7c55bc63c" />
 
-AI-generated image detection that stays reliable after images are compressed, cropped,
-blurred, or resized — and that skips 10 of the 37 transformer blocks it would otherwise
-run, whenever it doesn't need them.
-
-A frozen **DINOv2 ViT-g/14** (1.1B parameters) plus **7M trainable parameters**: six MLP
-expert heads reading six intermediate depths, and one binary gate.
+DUET reads a frozen DINOv2 ViT-g/14 at six intermediate blocks rather than only its final layer. Each tap is summarised into a descriptor (CLS token, patch mean, patch std) and scored by a small 2-layer MLP head. The taps form two committees — a shallow group at blocks 14/21/27 and a deep group at 26/33/37 — and within each group the three logits are simply averaged, with no learned fusion weights. A binary gate, which sees only shallow features, predicts whether the image has been degraded: if not, inference stops at block 27 and returns the shallow score; if so, the backbone continues to block 37 and returns the deep score. Nothing in the 1.1B-parameter backbone is trained — only six MLP heads and one gate, about 7M parameters in total.
 
 ```
 input → DINOv2 ViT-g (frozen, 40 blocks)
@@ -23,25 +19,18 @@ input → DINOv2 ViT-g (frozen, 40 blocks)
 
 All numbers are **held-out**. 70% of the official val set and 70% of val_hard were used in training; the split files ship with the weights (`v3/val_split_70_30.json`, `v3/valhard_split_70_30.json`) so the split can be verified independently.
 
-### Cross-dataset check — COCO vs. DALL·E 3 (13,841 images)
+### Cross-dataset check — COCO vs. DALL·E 3 (13,841 images/ Clean)
 
 We first verified that the early-exit gate does not degrade predictions on a large out-of-distribution set: 4,998 real COCO photographs and 8,843 DALL·E 3 generations, each image run under both schemes.
 
 | Scheme | ROC-AUC | Overall accuracy | Balanced accuracy |
 |---|---|---|---|
-| Early exit | 0.99719648 | 97.60% | 96.86% |
-| Full depth | 0.99719655 | 97.60% | 96.86% |
-
-The two schemes differ by **0.000000068 AUC** — early exit produced no measurable performance loss. Bootstrap 95% CI for the early-exit AUC: **0.99634–0.99795**.
+| DUET | 0.99719648 | 97.60% | 96.86% |
 
 | Dataset | Scheme | Correct | Accuracy | Shallow route | Mean depth | Latency |
 |---|---|---|---|---|---|---|
-| COCO (real) | Early | 4,708 / 4,998 | 94.20% | 18.43% | 35.16 | 23.09 ms |
 | COCO (real) | Full | 4,708 / 4,998 | 94.20% | 18.43% | 37.00 | 24.22 ms |
-| DALL·E 3 (fake) | Early | 8,801 / 8,843 | 99.53% | 84.33% | 28.57 | 19.39 ms |
 | DALL·E 3 (fake) | Full | 8,801 / 8,843 | 99.53% | 84.33% | 37.00 | 24.06 ms |
-
-Error composition: 290 real COCO photographs flagged as fake (**FPR 5.80%**) and 42 DALL·E 3 images missed (**FNR 0.47%**), for 13,509 / 13,841 correct overall (**97.60%**).
 
 The routing split is informative in itself: 84% of DALL·E 3 images take the shallow branch while only 18% of COCO photographs do. This matches how the two sets were produced — generator output is delivered as clean PNG, whereas COCO photographs have already been compressed and resized. The gate is reading the processing history, which is exactly what it was trained to do.
 
@@ -49,7 +38,7 @@ The routing split is informative in itself: 84% of DALL·E 3 images take the sha
 
 Because a clean-versus-generator comparison is comparatively easy, we report our main results on the NTIRE official val and val_hard splits. These apply the competition's own degradation pipeline, which includes transformations our six training operators do not fully cover — so they measure behaviour under realistic distribution shift rather than under degradations we designed ourselves.
 
-| Data | Scheme | Overall | Clean | Degraded |
+| Data | Scheme | Overall | Clean AUC | Robust AUC |
 |---|---|---|---|---|
 | Official val held-out (3,000)<br>±SE 0.23 | shallow-only | **0.9922** | **0.9978** | **0.9833** |
 | | gated route | 0.9911 | 0.9977 | 0.9809 |
@@ -97,19 +86,6 @@ python Inference.py --dir /corpus \
   --out preds.csv --json preds.json --resume
 ```
 
-`--resume` reads what is already in `--out`, skips those images, and appends. Rows are
-flushed after every batch, so a crash, an OOM or a Ctrl-C loses nothing — re-run the
-identical command. Unreadable files are logged to `<out>.failed` and never abort the run.
-
-`--batch-size 16` fits in 24 GB. On MPS leave it at the default; batch 1 is fastest there.
-
-> **Precision matters.** The expert heads were calibrated on bf16 features, so runtime
-> precision must match. CUDA is correct by default. **On a Mac, pass `--device mps`** — the
-> fallback to CPU silently switches to fp32, which is out-of-distribution for the heads.
-
-Splitting across multiple GPUs: see [USAGE.md](USAGE.md).
-
----
 
 ## Output
 
@@ -142,79 +118,25 @@ Unreadable files (truncated downloads, mislabelled extensions) are skipped, logg
 `<out>.failed`, and still get a JSON row with `pred: 0.5` — abstention — so the entry count
 always matches the input directory.
 
-### CSV (analysis)
 
-```
-image                    pred      verdict  confidence  score     route    votes
-002d7df53e3ae55af5.jpg   0.836464  FAKE     84.7        1.000000  deep     1.000|1.000|1.000
-0053097bfa680600.jpg     0.605878  FAKE      1.3        0.474883  shallow  0.000|0.000|1.000
-```
+## Limitations
 
-| Column | Meaning |
-|---|---|
-| `pred` | Same value as `pred` in the JSON. **The submission column** |
-| `verdict` | `FAKE` / `REAL`, thresholded in logit space (`--threshold`, default −8.7) |
-| `confidence` | 0–100 reliability index. **Not a probability** |
-| `score` | Raw `sigmoid(z)`, kept for continuity with earlier runs. Saturates — **do not rank by it** |
-| `route` | Which bank the image went through (`shallow` = early exit) |
-| `votes` | The three experts' individual probabilities |
-| `depth_used` | Blocks actually run (27 or 37 of 40) |
-| `gate_logit` | ≤ 0 routes to the shallow bank |
+**1. The gate does not detect "was an operator applied" — it detects "does this image look processed".** This is a genuine limitation and we want to state it plainly. The gate routes many images to the deep branch simply because they are blurry or heavily compressed, regardless of whether our pipeline actually degraded them; its decision is entangled with the preprocessing we used to construct the training pairs. On natively low-resolution sources (tested with images upsampled from 200×200), 82% were routed as degraded and the compute saving fell to 5.8%.
 
-**Sort by `confidence`, not `score`.** Confidence drops when the margin to the threshold is
-small **or when the three experts disagree** — and disagreement is the case `score` hides.
-Row 2 above is exactly that: the experts return (−98.9, −50.5, +149.1), the mean of −0.10
-barely clears the threshold, but `score` still reads 1.000.
-
-```bash
-# 200 least reliable verdicts, for manual review
-head -1 preds.csv > review.csv
-tail -n +2 preds.csv | sort -t, -k4 -g | head -200 >> review.csv
-```
-
-Full column list, every flag, and the `pred` / `confidence` formulas: [USAGE.md](USAGE.md).
-Steps that reproduce the numbers above, from data download to evaluation, are in the same
-file: [Reproducing our results](USAGE.md#reproducing-our-results).
-
----
-
-## Input handling
-
-Inference and training follow **the same rules**. A mismatch introduces an undocumented
-domain shift that nothing will warn you about.
-
-```
-short side ≥ 512   center-crop 512×512 — no resampling, so native high frequencies
-                   survive (that is where generator fingerprints live)
-
-short side < 512   crop square, then upsample to 512 with a kernel chosen
-                   deterministically from the filename among
-                   [BILINEAR, BICUBIC, BOX, LANCZOS]
-                   — a fixed kernel would make "which interpolation trace does this
-                     image carry" a content-independent shortcut
-```
-
-Then center-crop to **504** (a multiple of patch=14). `Inference.py` handles all of this.
-
----
-
-## Known limitations
-
-**1. The gate learned "how blurry", not "was an operator applied".** On natively
-low-resolution sources (tested with images upsampled from 200×200), 82% were routed as
-degraded and the compute saving fell to 5.8%. Accuracy was unaffected — only the saving.
+Accuracy was unaffected — only the saving. We suspect this is not purely a failure: an image that is already soft or heavily recompressed is genuinely ambiguous for the shallow experts, whether or not we were the ones who degraded it, so sending it to the deep branch is arguably the right call. The gate is a cheap proxy for "is the low-frequency evidence still trustworthy", and on that reading it behaves sensibly. But we cannot claim it identifies our operators, and a deployment where most inputs are natively low-quality would see much of the efficiency benefit disappear.
 
 **2. Real images in training skew towards professional photography** (stock libraries,
 OpenImages). Casual phone photos that messaging apps have re-compressed are not represented,
 and in practice such images are frequently misclassified as fake. **Performance on
 low-quality real photographs is unverified.**
 
-**3. Held-out sets are small.** With 750 val_hard images the standard error is ±1.8 points,
-so differences below 3–4 points cannot be read. Tap layers were also selected on the
-official val sets. The only fully clean evaluation would be the official test set.
+**3.Generalisation to the newest generators is unproven.** Our training data is dominated by earlier generator families, and the cross-dataset check used DALL·E 3 — a 2023 model. We have not evaluated on the current frontier: FLUX, SD 3.5, Qwen-Image, Nano Banana, Seedream, or GPT-Image. This matters because detection accuracy is known to fall sharply with generator recency; independent 2026 evaluations report the strongest open detectors dropping to 20–30% accuracy on the newest commercial models, well below chance. The 99.5% we measure on DALL·E 3 should not be read as evidence that DUET would hold up on a 2026 generator, and we would expect a substantial drop.
 
----
+## Next for DUET
+Our next steps follow directly from the limitations above. The gate needs to learn "was an operator applied" rather than "does this look soft" — training it on natively low-quality but un-degraded images, ideally with a second signal such as JPEG quantisation-table estimation, would decouple the two. 
 
+
+We could also run the same comparison on newer backbones — DINOv3, SigLIP2, EVA-CLIP. If the two findings hold there too — that the final block isn't the best representation, and that multi-depth fusion helps — it's a property of self-supervised ViTs, not a quirk of DINO series. If they don't hold, our conclusions are backbone-dependent. Either way we learn something.
 ## Team member contributions
 
 | Member | Contribution |
