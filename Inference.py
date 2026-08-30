@@ -111,6 +111,15 @@ FIELDS = ["image", "verdict", "confidence", "score", "label", "route", "experts"
 EXIT_DEPTH, FULL_DEPTH = 27, 37        # 早退/部署深度 / exit/deployed full depth
 
 
+def default_device() -> str:
+    """自动选择运行设备 / Select the best available runtime device."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def pick_kernel(name: str):
     """按图名确定性地挑一个上采样内核;
     deterministically select the same per-image kernel policy used in training."""
@@ -276,7 +285,11 @@ def main(argv=None) -> int:
                     help="disable early exit: run both banks, then pick by the gate. "
                          "Same accuracy, no compute saved; use it to verify that "
                          "early exit does not change results")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+ap.add_argument(
+    "--device",
+    default=default_device(),
+    help="runtime device: cuda, mps, or cpu; defaults to the best available device",
+)
     a = ap.parse_args(argv)
 
     paths = ([Path(a.image)] if a.image else
