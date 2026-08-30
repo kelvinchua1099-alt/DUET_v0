@@ -55,27 +55,63 @@ cd DUET_v0
 
 hf download TechJam2026-Jamlai-Bench/squade-vitg \
   --include "v3/*" --local-dir ckpt
-
-python Inference.py --dir /path/to/images \
-  --shallow ckpt/v3/mix2_shallow \
-  --deep    ckpt/v3/mix2_deep \
-  --gate    ckpt/v3/mix2_gate.pt \
-  --out     preds.csv
 ```
 
 DINOv2 weights download automatically on first run.
 
-> **Precision matters.** The expert heads were calibrated on bf16 features, so the runtime
+**Single directory:**
+
+```bash
+python Inference.py --dir /path/to/images \
+  --shallow ckpt/v3/mix2_shallow \
+  --deep    ckpt/v3/mix2_deep \
+  --gate    ckpt/v3/mix2_gate.pt \
+  --out     preds.csv \
+  --out-json preds.json
+```
+
+**Large corpus (past a few thousand images):**
+
+```bash
+python Inference.py --dir /corpus \
+  --shallow ckpt/v3/mix2_shallow \
+  --deep    ckpt/v3/mix2_deep \
+  --gate    ckpt/v3/mix2_gate.pt \
+  --device cuda --batch-size 16 \
+  --out preds.csv --out-json preds.json --resume
+```
+
+`--resume` reads what is already in `--out`, skips those images, and appends. Rows are
+flushed after every batch, so a crash, an OOM or a Ctrl-C loses nothing — re-run the
+identical command. Unreadable files are logged to `<out>.failed` and never abort the run.
+
+`--batch-size 16` fits in 24 GB. On MPS leave it at the default; batch 1 is fastest there.
+
+> **Precision matters.** The expert heads were calibrated on bf16 features, so runtime
 > precision must match. CUDA is correct by default. **On a Mac, pass `--device mps`** — the
 > fallback to CPU silently switches to fp32, which is out-of-distribution for the heads.
 
-Add `--resume` for long runs: rows are flushed after every batch, unreadable files are
-skipped rather than aborting, and re-running the identical command picks up where it
-stopped. See [USAGE.md](USAGE.md) for batch sizing, multi-GPU sharding, and throughput.
+Splitting across multiple GPUs: see [USAGE.md](USAGE.md).
 
 ---
 
 ## Output
+
+### JSON (challenge submission format)
+
+`--out-json` writes one entry per image: ⚠️
+
+```json
+[
+  {"image_path": "/corpus/002d7df53e3ae55af5.jpg", "pred": 1.000000},
+  {"image_path": "/corpus/0053097bfa680600.jpg",   "pred": 0.474883}
+]
+```
+
+`pred` is the probability that the image is AI-generated. Note that it saturates at both
+ends — see the CSV's `confidence` column below for a more useful triage signal.
+
+### CSV (analysis)
 
 ```
 image                    verdict  confidence  score     route    votes
@@ -87,16 +123,16 @@ image                    verdict  confidence  score     route    votes
 |---|---|
 | `verdict` | `FAKE` / `REAL`, thresholded in logit space (`--threshold`, default −8.7) |
 | `confidence` | 0–100 reliability index. **Not a probability** |
-| `score` | 0–1. Saturates at both ends — **do not use it for triage** |
+| `score` | Same value as `pred` in the JSON. Saturates — **do not use it for triage** |
 | `route` | Which bank the image went through (`shallow` = early exit) |
 | `votes` | The three experts' individual probabilities |
 | `depth_used` | Blocks actually run (27 or 37 of 40) |
 | `gate_logit` | ≤ 0 routes to the shallow bank |
 
 **Sort by `confidence`, not `score`.** Confidence drops when the margin to the threshold is
-small **or when the three experts disagree** — and disagreement is the case that `score`
-hides. Row 2 above is exactly that: the experts return (−98.9, −50.5, +149.1), the mean
-of −0.10 barely clears the threshold, but `score` still reads 1.000.
+small **or when the three experts disagree** — and disagreement is the case `score` hides.
+Row 2 above is exactly that: the experts return (−98.9, −50.5, +149.1), the mean of −0.10
+barely clears the threshold, but `score` still reads 1.000.
 
 ```bash
 # 200 least reliable verdicts, for manual review
