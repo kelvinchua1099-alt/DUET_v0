@@ -285,11 +285,11 @@ def main(argv=None) -> int:
                     help="disable early exit: run both banks, then pick by the gate. "
                          "Same accuracy, no compute saved; use it to verify that "
                          "early exit does not change results")
-ap.add_argument(
-    "--device",
-    default=default_device(),
-    help="runtime device: cuda, mps, or cpu; defaults to the best available device",
-)
+    ap.add_argument(
+        "--device",
+        default=default_device(),
+        help="runtime device: cuda, mps, or cpu; defaults to the best available device",
+    )
     a = ap.parse_args(argv)
 
     paths = ([Path(a.image)] if a.image else
