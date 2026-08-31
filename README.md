@@ -69,15 +69,18 @@ Training was completed on a single NVIDIA RTX PRO 4000 in approximately six hour
 
 ## Quick start
 
+The checkpoint repository is access-gated. First [request access on Hugging Face](https://huggingface.co/TechJam2026-Jamlai-Bench/squade-vitg), then authenticate using the account that received access.
+
 ```bash
 git clone https://github.com/kelvinchua1099-alt/DUET_v0.git
 cd DUET_v0
 pip install -r requirements.txt
+hf auth login
 hf download TechJam2026-Jamlai-Bench/squade-vitg \
   --include "v3/*" --local-dir ckpt
 ```
 
-DINOv2 weights download automatically on first run.
+The public DINOv2 backbone weights are downloaded automatically on first use.
 
 **Single directory:**
 
@@ -97,10 +100,11 @@ python Inference.py --dir /corpus \
   --shallow ckpt/v3/mix2_shallow \
   --deep    ckpt/v3/mix2_deep \
   --gate    ckpt/v3/mix2_gate.pt \
-  --device cuda --batch-size 16 \
+  --device cuda --batch-size 8 \
   --out preds.csv --json preds.json --resume
 ```
 
+For input formats, checkpoint compatibility, resume behaviour, and the complete CLI reference, see [USAGE.md](USAGE.md).
 
 ## Output
 
