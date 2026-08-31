@@ -1,7 +1,7 @@
 """把整个数据集过一遍冻结的 DINO backbone，把逐层特征落盘。
 
 用法:
-    python cache_features.py --manifest data/manifest.csv --out cache/probe          # 全 33 层
+    python cache_features.py --manifest data/manifest.csv --out cache/probe          # all layers
     python cache_features.py --manifest data/manifest.csv --out cache/train --layers 14,21,27
     python cache_features.py --manifest data/manifest.csv --out cache/smoke --limit 32
 
@@ -59,11 +59,10 @@ from utils.deg_taxonomy import (  # noqa: E402
     TAXONOMY_NAME,
 )
 
-EXPECT_SIZE = 504     # 数据集已统一到 512x512
+EXPECT_SIZE = 504     # DINOv2 patch size 14: 36×36 patch grid
 
-# 按设备的默认 batch。MPS 上实测 batch 越大越慢(1.19 / 1.25 / 1.44 / 2.09 s/图,
-# 对应 batch 1/4/8/16):output_hidden_states=True 要把 33 层全留在内存,batch=16 时
-# 光 hidden_states 就 ~1.4 GB,在统一内存上直接压出带宽瓶颈。独显没这个问题,可调大。
+# Defaults align with the released benchmark. MPS uses batch 1 to reduce
+# unified-memory pressure; CUDA uses the reported A100 batch size.
 DEFAULT_BATCH = {"mps": 1, "cuda": 8, "cpu": 4}
 
 COLUMN_ALIASES = {
@@ -256,19 +255,19 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True, help="缓存输出目录")
     ap.add_argument("--root", default=".", help="manifest 里相对路径的基准目录")
     ap.add_argument("--model", default=DEFAULT_MODEL)
+        ap.add_argument(
+        "--layers",
+        default="all",
+        help='"all" or comma-separated layers. Released shallow bank: '
+             '"14,21,27"; released deep bank: "26,33,37"',
+    )
     ap.add_argument(
-    "--layers",
-    default="all",
-    help='"all" or comma-separated layers. Released shallow bank: '
-         '"14,21,27"; released deep bank: "26,33,37"',
-)
-ap.add_argument(
-    "--crop-size",
-    type=int,
-    default=None,
-    help=f"Center-crop size; must be divisible by the backbone patch size. "
-         f"Default: {EXPECT_SIZE}",
-)
+        "--crop-size",
+        type=int,
+        default=None,
+        help=f"Center-crop size; must be divisible by the backbone patch size. "
+             f"Default: {EXPECT_SIZE}",
+    )
     ap.add_argument("--pool", default="cls+mean+std", choices=["cls", "cls+mean", "cls+mean+std", "mean+std"])
     ap.add_argument("--batch-size", type=int, default=None,
                     help="默认按设备决定(见 DEFAULT_BATCH)。MPS 上实测 batch=1 最快")
