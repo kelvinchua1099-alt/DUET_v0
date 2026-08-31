@@ -357,7 +357,7 @@ def main(argv=None) -> int:
     print(f"{len(paths)} image(s)   shallow bank {SHALLOW_LAYERS}   "
           f"deep bank {DEEP_LAYERS}", flush=True)
 
-    net = DUET(a.shallow, a.deep, a.gate, a.model, a.crop_size, a.device,
+    net = DUET(a.shallow, a.deep, a.gate, a.model, a.crop_size, a.device, allow_mismatch=a.allow_mismatch)
 
     # 流式写盘以保留已完成批次;只有续传时才追加。
     # Stream completed batches to disk; append only when resuming an existing output.
