@@ -4,7 +4,7 @@
 DUET reads a frozen DINOv2 ViT-g/14 at six intermediate blocks rather than only its final layer. Each tap is summarised into a descriptor (CLS token, patch mean, patch std) and scored by a small 2-layer MLP head. The taps form two committees — a shallow group at blocks 14/21/27 and a deep group at 26/33/37 — and within each group the three logits are simply averaged, with no learned fusion weights. A binary gate, which sees only shallow features, predicts whether the image has been degraded: if not, inference stops at block 27 and returns the shallow score; if so, the backbone continues to block 37 and returns the deep score. Nothing in the 1.1B-parameter backbone is trained — only six MLP heads and one gate, about 7M parameters in total.
 
 ```
-input → DINOv2 ViT-g (frozen, 40 blocks)
+input → DINOv2 ViT-g (frozen, 40 blocks)--The whole mechanism can be moved to Dinov3 and probably other ViT-based encoder.(We planned to used Dinov3 at first but wasn't very sure about the permission of a non-standard open-source license)
          │
          ├─ run to L27, tap L14/L21/L27 → shallow bank, uniform mean in logit space
          │                              → gate (reads the same shallow features)
@@ -35,6 +35,8 @@ We first verified that the early-exit gate does not degrade predictions on a lar
 The routing split is informative in itself: 84% of DALL·E 3 images take the shallow branch while only 18% of COCO photographs do. This matches how the two sets were produced — generator output is delivered as clean PNG, whereas COCO photographs have already been compressed and resized. The gate is reading the processing history, which is exactly what it was trained to do.
 
 ### Primary evaluation — NTIRE official splits
+
+We used an extra benchmark to test our model because we thought the official validation set isn't challenging enough even for an encoder that is kind of outdated.
 
 All numbers are **held-out**. 70% of the official val set and 70% of val_hard were used in training; the split files ship with the weights (`v3/val_split_70_30.json`, `v3/valhard_split_70_30.json`) so the split can be verified independently. "Robust" — AUC on the degraded subset — is the competition's headline metric.
 
