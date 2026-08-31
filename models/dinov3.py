@@ -1,25 +1,9 @@
-"""DINOv3 冻结骨干 —— 全层 token 特征提取。
+"""Frozen Hugging Face DINO backbone for intermediate-layer feature extraction.
 
-被 cache_features.py 与 probe_layers.py 共用。四条纪律写死在代码里,不靠调用方自觉:
-
-1. **冻结**    构造时 eval() + requires_grad_(False),并覆盖 train() 使其无法被解冻。
-               (DINOv3 的 pos_embed_shift / jitter / rescale 增广只在 train mode 生效,
-                一旦误入 train mode,同一张图两次前向结果不同,缓存即失效。)
-2. **norm**    抽取阶段对每一层统一施加 model.norm,对齐官方
-               get_intermediate_layers(norm=True) 与 DINOv2 以来的 linear-probe 协议。
-               HF 默认只对最后一层施加 norm(见 modeling_dinov3_vit.py 的
-               tie_last_hidden_states=False),照单全收会得到尺度不一致的跨层特征,
-               污染 E0 层级探针热力图。
-3. **不 resize** DINOv3 用原生 2D RoPE,天然支持变分辨率。HF processor 默认硬压
-               224x224,那本身就是一次重采样退化:抹掉浅层生成器指纹、洗掉 crop 证据,
-               还和退化估计器的 resize 维标签打架。这里全程只裁不缩。
-4. **确定性**  统一输入窗口 512x512 center crop。特征要落盘缓存,任何随机性都会让
-               缓存与重跑对不上,消融之间的变量就不干净了。需要随机裁切时走
-               crop="random" + 按 image_id 派生种子,仍然可复现。
-5. **bf16**    ViT-H+ 深层有巨大激活:实测 L31 的 prenorm 峰值达 34720,而 fp16 上限
-               只有 65504 —— 余量仅 1.9x。数万条样本规模下必有图溢出成 inf,缓存被
-               静默污染且事后极难排查。bf16 相对 fp32 的误差 1.09%(余弦 0.99994),
-               远低于线性探针噪声下限,换来的是完全没有溢出风险。
+The released DUET checkpoints use facebook/dinov2-giant with a 504×504 crop.
+The historical module and class names are retained for source compatibility.
+The backbone is frozen, every tapped layer is normalised consistently, image
+resizing is avoided, and deterministic crops are used for reproducible caches.
 """
 
 from __future__ import annotations
@@ -31,8 +15,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoImageProcessor, AutoModel
 
-DEFAULT_MODEL = "facebook/dinov3-vith16plus-pretrain-lvd1689m"
-CROP_SIZE = 512      # 16 的整数倍 -> 32x32 = 1024 个 patch token,天然 patch 对齐
+DEFAULT_MODEL = "facebook/dinov2-giant"
+CROP_SIZE = 504      # 16 的整数倍 -> 32x32 = 1024 个 patch token,天然 patch 对齐
 
 
 def pick_device(prefer: str | None = None) -> torch.device:
@@ -408,54 +392,6 @@ class DINOv3Backbone(nn.Module):
         return torch.cat(parts[mode], dim=-1)
 
 
-# 三个抽头层 —— 已由 E0 层级探针定下,不再是占位值。
-#
-# 来源:NTIRE 2026 val 集(10,000 张,官方给出逐图退化真值 `distortions` /
-# `distortion_scales`)上的 33 层 x 22 桶热力图。证伪检查三条全过:
-#     最优层跨度 9(要 >=3)  不同取值 10(要 >=3)  最大并列 1(要 <=3)
-# 22 个桶的并列层数全是 1,argmax 唯一确定,不存在 AUC 饱和导致的任意选层。
-#
-# 各桶最优层落在 20~29:
-#     20 impulsenoise | 21 clean | 22 colorshift,pixelate
-#     23 randomaspectcrop,rgbshift,whitenoise,*shattered
-#     24 colorsat,downscale,gausblur,jitter,quantization | 25 jpeg
-#     26 brighten,lincontrchange,multnoise,randomcrop | 27 motionblur,*smudged
-#     28 darken | 29 lensblur
-# 取 20 / 24 / 28 覆盖这个区间的低、中、高三段。
-#
-# 为什么不直接用 probe_layers.py 输出的 band_separated [0, 20, 24]:
-# 那个搜索把 33 层强行三等分,浅带只能在 0~10 里取,而该区间**整段**都远低于
-# 任何一个桶的最优(第 0 层各退化桶只有 55~73 AUC),选出 0 层是约束的产物、
-# 不是数据的意见。无约束最优是 [22, 24, 27],与这里取的三层同处一个区间。
-#
-# ⚠️ 诚实边界:探针层面的 oracle 增益只有 +0.37 AUC 点(逐桶最优层 98.61 vs
-# 单一最优层 98.23),且该值取自 33 层的 max,带 winner's curse 偏差。
-# Stage 2 报 oracle gap 时务必看 train_WeightandExpert.py 的标准误守卫。
-PROBE_BANDS = {"shallow": 20, "mid": 24, "deep": 28}
-PROBE_BANDS_N_LAYERS = 32          # 探针跑在 ViT-H+/16(32 个 block)上
-
-
-def default_bands(n_layers: int) -> dict[str, int]:
-    """浅 / 中 / 深三个抽头层。
-
-    ViT-H+/16(n_layers=32)直接返回探针定下的 PROBE_BANDS。换别的 backbone 时
-    退回等距三分点的**占位值**,并告警 —— 那三层没有被任何探针验证过,
-    直接拿去训专家等于跳过了 CLAUDE.md 里那道门禁。
-    """
-    if n_layers == PROBE_BANDS_N_LAYERS:
-        return dict(PROBE_BANDS)
-    warnings.warn(
-        f"n_layers={n_layers} 与探针跑过的 {PROBE_BANDS_N_LAYERS} 不符,"
-        f"退回等距三分点占位值。这三层未经探针验证,先跑 probe_layers.py。",
-        stacklevel=2,
-    )
-    return {
-        "shallow": max(1, round(n_layers * 0.25)),
-        "mid": round(n_layers * 0.55),
-        "deep": round(n_layers * 0.85),
-    }
-
-
 if __name__ == "__main__":
     import numpy as np
 
@@ -466,12 +402,11 @@ if __name__ == "__main__":
     print(f"hidden_size   : {bb.hidden_size}")
     print(f"patch_size    : {bb.patch_size}")
     print(f"n_registers   : {bb.n_registers}   -> prefix token 数 = {bb.n_prefix}")
-    print(f"default_bands : {default_bands(bb.n_layers)}")
 
     pre = bb.make_preprocessor()
     big = (np.random.rand(768, 1024, 3) * 255).astype(np.uint8)
     x = pre(big)
-    print(f"\n768x1024 --512 center crop--> {tuple(x.shape)}")
+    print(f"\n768x1024 --504 center crop--> {tuple(x.shape)}")
 
     feats = bb.forward_layers(x)
     for i in (0, bb.n_layers // 2, bb.n_layers):
