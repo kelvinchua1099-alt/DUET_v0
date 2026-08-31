@@ -38,7 +38,7 @@ We used fixed image-level 70/30 splits for both official val and val_hard. Only 
 | | shallow committee [14,21,27] | 27 | 30.2 | 0.9423 | **0.9904** | 0.8674 |
 | | **gated route — DUET** | 27 or 37 | 33.5 | **0.9430** | 0.9857 | **0.8781** |
 
-*Latency was measured on a single NVIDIA A100 GPU with batch size 8 and BF16 inference at 504×504 resolution. Timing includes model preprocessing and forward inference, but excludes image decoding and disk I/O.*
+*Latency was measured on a single NVIDIA A100 GPU with batch size 8 and BF16 inference at 504×504 resolution. Timing includes model preprocessing and forward inference, but excludes image decoding and disk I/O. The A100 was used only for the four final evaluation runs on the official validation sets; model training was performed separately on a single NVIDIA RTX PRO 4000.*
 
 ### What the ablation shows
 
