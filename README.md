@@ -164,4 +164,4 @@ We could also run the same comparison on newer backbones — DINOv3, SigLIP2, EV
 
 ## License
 
-MIT. DINOv2 weights are subject to their own license.
+DUET source code is released under the [MIT License](LICENSE). DINOv2 weights remain subject to their original license terms.
