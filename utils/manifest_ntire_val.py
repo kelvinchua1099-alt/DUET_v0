@@ -1,4 +1,4 @@
-"""NTIRE val / val_hard 的官方退化真值 -> SQuaDE manifest。
+"""NTIRE val / val_hard 的官方退化真值 -> DUET manifest。
 
     export SQUADE_TAXONOMY=ntireval
     python utils/manifest_ntire_val.py --labels data/ntire_val/_dl/val_labels.csv \
