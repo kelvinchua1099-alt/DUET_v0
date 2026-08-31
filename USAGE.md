@@ -19,8 +19,8 @@ published numbers.
 --resume           # skip images already in --out and append; makes a killed run restartable
 --shard I/N        # process only shard I of N (0-based), for splitting across machines
 
---device mps       # required on Mac; optional on CUDA. **Never cpu** — see README
---batch-size 8     # 16 fits in 24 GB. On MPS leave it at the default; batch 1 is fastest
+--device cuda       # optional; defaults to CUDA, then MPS, then CPU
+--batch-size 8      # released A100 benchmark setting; reduce if memory is limited
 --threshold -8.7   # decision threshold in **logit space**. 0.0 restores score>0.5 behaviour
 --crop-size 504    # a multiple of DINOv2's patch=14. Do not change
 --no-early-exit    # run both banks, then pick by the gate. Same accuracy, no compute saved;
@@ -35,7 +35,7 @@ published numbers.
 | Column | Meaning |
 |---|---|
 | `image` | Path as given to `--dir` / `--image` |
-| `pred` | **0–1 likelihood of being AI-generated. The submission column** |
+| `pred` | **Uncalibrated 0–1 ranking score for AI-generated content. The submission column** |
 | `verdict` | `FAKE` / `REAL`, from a threshold in logit space (`--threshold`, default −8.7) |
 | `confidence` | 0–100 reliability index. **Not a probability** — see below |
 | `score` | Raw `sigmoid(z)`. Kept for continuity with earlier runs; saturates, do not rank by it |
@@ -46,7 +46,7 @@ published numbers.
 | `vote_spread` | Largest gap among the three votes. Large = the image sits on the boundary |
 | `depth_used` | How many blocks actually ran (27 or 37) |
 | `gate_logit` | The gate's output; ≤ 0 means "clean" and routes to the shallow bank |
-| `ms_per_img` | Time per image |
+| `ms_per_img` | Model preprocessing and forward inference time; excludes image decoding and disk I/O |
 
 ## How `pred` is computed
 
@@ -88,7 +88,7 @@ ranking aid for manual review, not as a probability.
 for i in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES=$i python Inference.py --dir /corpus \
     --shallow ckpt/v3/mix2_shallow --deep ckpt/v3/mix2_deep \
-    --gate ckpt/v3/mix2_gate.pt --device cuda --batch-size 16 \
+    --gate ckpt/v3/mix2_gate.pt --device cuda --batch-size 8 \
     --out preds.$i.csv --shard $i/4 --resume &
 done
 wait
@@ -112,14 +112,18 @@ shard can be restarted on its own.
 
 ### Throughput
 
-| Hardware | Throughput | 100k images |
-|---|---|---|
-| 24 GB GPU, batch 16 | ~1.5 img/s | ~18 h |
-| Apple M-series, MPS | ~0.6 img/s | ~46 h |
+The reported benchmark uses a single NVIDIA A100, BF16, batch size 8, and
+504×504 inputs. It includes model preprocessing and forward inference but
+excludes image decoding and disk I/O.
 
-Early exit only helps on corpora that contain clean images; a corpus that is entirely
-re-compressed photographs routes everything to the deep bank and saves nothing. The run
-summary reports the actual saving.
+| Execution path | ms/image | images/s |
+|---|---:|---:|
+| Shallow committee | 30.2 | 33.1 |
+| DUET gated route | 33.5 | 29.9 |
+| Deep committee | 40.8 | 24.5 |
+
+Actual end-to-end throughput also depends on storage speed, image decoding,
+input resolution, and the fraction of images routed to each branch.
 
 ---
 
