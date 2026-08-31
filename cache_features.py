@@ -255,7 +255,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True, help="缓存输出目录")
     ap.add_argument("--root", default=".", help="manifest 里相对路径的基准目录")
     ap.add_argument("--model", default=DEFAULT_MODEL)
-        ap.add_argument(
+    ap.add_argument(
         "--layers",
         default="all",
         help='"all" or comma-separated layers. Released shallow bank: '
