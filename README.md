@@ -143,7 +143,7 @@ OpenImages). Casual phone photos that messaging apps have re-compressed are not 
 and in practice such images are frequently misclassified as fake. **Performance on
 low-quality real photographs is unverified.**
 
-**3.Generalisation to the newest generators is unproven.** Our training data is dominated by earlier generator families, and the cross-dataset check used DALL·E 3 — a 2023 model. We have not evaluated on the current frontier: FLUX, SD 3.5, Qwen-Image, Nano Banana, Seedream, or GPT-Image. This matters because detection accuracy is known to fall sharply with generator recency; independent 2026 evaluations report the strongest open detectors dropping to 20–30% accuracy on the newest commercial models, well below chance. The 99.5% we measure on DALL·E 3 should not be read as evidence that DUET would hold up on a 2026 generator, and we would expect a substantial drop.
+**3. Generalisation to newer generators remains unverified.** Our training data is dominated by earlier generator families, and the external sanity check uses DALL·E 3. We have not yet evaluated DUET on newer generator families. The DALL·E 3 result should therefore not be interpreted as evidence of equivalent performance on more recent generators; evaluating this remains future work.
 
 ## Next for DUET
 Our next steps follow directly from the limitations above. The gate needs to learn "was an operator applied" rather than "does this look soft" — training it on natively low-quality but un-degraded images, ideally with a second signal such as JPEG quantisation-table estimation, would decouple the two. 
