@@ -1,4 +1,4 @@
-# DUET — Depth-Uniform Ensemble with early Termination
+# DUET — Depth-Uniform Ensemble with Early Termination
 <img width="1536" height="1024" alt="main" src="https://github.com/user-attachments/assets/3dba46aa-3b0f-456d-860d-f8d7c55bc63c" />
 
 DUET reads a frozen DINOv2 ViT-g/14 at six intermediate blocks rather than only its final layer. Each tap is summarised into a descriptor (CLS token, patch mean, patch std) and scored by a small 2-layer MLP head. The taps form two committees — a shallow group at blocks 14/21/27 and a deep group at 26/33/37 — and within each group the three logits are simply averaged, with no learned fusion weights. A binary gate, which sees only shallow features, predicts whether the image has been degraded: if not, inference stops at block 27 and returns the shallow score; if so, the backbone continues to block 37 and returns the deep score. Nothing in the 1.1B-parameter backbone is trained — only six MLP heads and one gate, about 7M parameters in total.
