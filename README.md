@@ -13,15 +13,15 @@ input → DINOv2 ViT-g/14 (frozen, 40 blocks)
          └─ "degraded" → resume to L37, tap L26/L33/L37 → deep bank
 ```
 The routing design is backbone-agnostic in principle, but all results reported in this repository use DINOv2 ViT-g/14. Transfer to DINOv3 or other ViT backbones has not yet been validated.
+
 ---
 
-## Results
 
 ## Results
 
 ### Primary evaluation — NTIRE official held-out splits
 
-We used fixed image-level 70/30 splits for both official val and val_hard. Only the 70% training partitions were used to fit the expert heads and gate; every number below was computed exclusively on the disjoint 30% held-out partitions. The exact split manifests are released with the weights and mirrored in this repository for independent verification.
+We used fixed image-level 70/30 splits for both official val and val_hard. Only the 70% training partitions were used to fit the expert heads and gate; every number below was computed exclusively on the disjoint 30% held-out partitions. The exact split manifests are released with the weights and mirrored here for independent verification: [official val split](splits/v3/val_split_70_30.json) and [val_hard split](splits/v3/valhard_split_70_30.json).
 
 `Overall` is ROC-AUC over the complete held-out partition; it is not the average of the other two columns. `Clean AUC` is computed on images without degradation, while `Robust AUC` is computed on the degraded subset and is the competition's headline metric. Approximate standard errors are reported in AUC percentage points.
 
@@ -64,6 +64,7 @@ This comparison is reported only as an external sanity check. Class label is cou
 ### Training cost
 
 Training was completed on a single NVIDIA RTX PRO 4000 in approximately six hours end-to-end. This includes image preprocessing, frozen-backbone feature caching, and training the expert heads and binary gate. The 1.1B-parameter DINOv2 backbone remained frozen throughout.
+
 ## Quick start
 
 ```bash
