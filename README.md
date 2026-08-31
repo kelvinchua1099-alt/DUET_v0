@@ -35,8 +35,8 @@ We used fixed image-level 70/30 splits for both official val and val_hard. Only 
 | Official val_hard held-out (750)<br>±SE 0.82 | single layer L37 + 1 MLP | 37 | 40.8 | 0.8613 | 0.8906 | 0.8319 |
 | | deep committee [26,33,37] | 37 | 40.8 | 0.9163 | 0.9569 | 0.8694 |
 | | single layer L27 + 1 MLP | 27 | 30.2 | 0.9206 | 0.9744 | 0.8513 |
-| | **shallow committee [14,21,27]** | 27 | 30.2 | **0.9430** | **0.9904** | 0.8674 |
-| | gated route — DUET | 27 or 37 | 33.5 | 0.9423 | 0.9857 | **0.8781** |
+| | shallow committee [14,21,27] | 27 | 30.2 | 0.9423 | **0.9904** | 0.8674 |
+| | **gated route — DUET** | 27 or 37 | 33.5 | **0.9430** | 0.9857 | **0.8781** |
 
 *Latency was measured on a single NVIDIA A100 GPU with batch size 8 and BF16 inference at 504×504 resolution. Timing includes model preprocessing and forward inference, but excludes image decoding and disk I/O.*
 
