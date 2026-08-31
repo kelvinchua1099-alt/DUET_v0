@@ -1,5 +1,5 @@
-"""SQuaDE 推理 —— 门控两组专家,干净图在 L27 提前退出。
-SQuaDE inference -- two gated expert banks with early exit at L27 for clean inputs.
+"""DUET 推理 —— 门控两组专家,干净图在 L27 提前退出。
+DUET inference -- two gated expert banks with early exit at L27 for clean inputs.
 
     python Inference.py --dir /path/to/images \
         --shallow runs/mix_shallow --deep runs/mix_deep --gate runs/mix_gate.pt \
@@ -169,7 +169,7 @@ def load_image(p: Path, size: int = 512) -> Image.Image:
         return normalize(im, size, kernel, fit="crop")
 
 
-class SQuaDE:
+class DUET:
     """门控两组专家 + 真正的提前退出。
     Two gated expert banks with true staged early-exit execution."""
 
@@ -357,8 +357,7 @@ def main(argv=None) -> int:
     print(f"{len(paths)} image(s)   shallow bank {SHALLOW_LAYERS}   "
           f"deep bank {DEEP_LAYERS}", flush=True)
 
-    net = SQuaDE(a.shallow, a.deep, a.gate, a.model, a.crop_size, a.device,
-                 allow_mismatch=a.allow_mismatch)
+    net = DUET(a.shallow, a.deep, a.gate, a.model, a.crop_size, a.device,
 
     # 流式写盘以保留已完成批次;只有续传时才追加。
     # Stream completed batches to disk; append only when resuming an existing output.
