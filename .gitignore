@@ -26,3 +26,12 @@ runs/
 .claude/
 CLAUDE.md
 STATUS.md
+
+# Local checkpoints and inference/evaluation outputs
+ckpt/
+results/
+logs/
+test_images/
+*.failed
+preds.csv
+preds.json
