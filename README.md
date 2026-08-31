@@ -115,13 +115,11 @@ python Inference.py --dir /corpus \
 ]
 ```
 
-`pred` ∈ [0, 1] is the likelihood that the image is AI-generated, and `pred > 0.5` is exactly
-the `FAKE` verdict. It is **not** the plain `sigmoid` of the fused logit — that is the CSV's
-`score` column, which saturates to `1.000000` for most rows because this model's logits
-routinely reach ±100, and ties like that cost AUC for nothing. `pred` centres the sigmoid on
-the decision threshold and divides by a temperature instead:
+`pred` ∈ [0, 1] is an uncalibrated ranking score for AI-generated content, not a calibrated probability. `pred > 0.5` is exactly equivalent to the `FAKE` verdict. It is not the plain sigmoid of the fused logit—that value is stored in the CSV `score` column and often saturates to `1.000000` because the model's logits can reach ±100.
 
-```
+Instead, `pred` centres the sigmoid on the decision threshold and applies a temperature:
+
+```text
 pred = sigmoid((z - threshold) / 20)
 ```
 
@@ -148,10 +146,12 @@ low-quality real photographs is unverified.**
 **3. Generalisation to newer generators remains unverified.** Our training data is dominated by earlier generator families, and the external sanity check uses DALL·E 3. We have not yet evaluated DUET on newer generator families. The DALL·E 3 result should therefore not be interpreted as evidence of equivalent performance on more recent generators; evaluating this remains future work.
 
 ## Next for DUET
+
 Our next steps follow directly from the limitations above. The gate needs to learn "was an operator applied" rather than "does this look soft" — training it on natively low-quality but un-degraded images, ideally with a second signal such as JPEG quantisation-table estimation, would decouple the two. 
 
 
 We could also run the same comparison on newer backbones — DINOv3, SigLIP2, EVA-CLIP. If the two findings hold there too — that the final block isn't the best representation, and that multi-depth fusion helps — it's a property of self-supervised ViTs, not a quirk of DINO series. If they don't hold, our conclusions are backbone-dependent. Either way we learn something.
+
 ## Team member contributions
 
 | Member | Contribution |
