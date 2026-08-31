@@ -27,31 +27,27 @@ We first verified that the early-exit gate does not degrade predictions on a lar
 |---|---|---|---|
 | DUET | 0.99719648 | 97.60% | 96.86% |
 
-| Dataset | Scheme | Correct | Accuracy | Shallow route | Mean depth | Latency |
-|---|---|---|---|---|---|---|
-| COCO (real) | Full | 4,708 / 4,998 | 94.20% | 18.43% | 37.00 | 24.22 ms |
-| DALL·E 3 (fake) | Full | 8,801 / 8,843 | 99.53% | 84.33% | 37.00 | 24.06 ms |
+| Dataset | Scheme | Correct | Accuracy | Shallow route |
+|---|---|---|---|---|
+| COCO (real) | DUET | 4,708 / 4,998 | 94.20% | 18.43% |
+| DALL·E 3 (fake) | DUET | 8,801 / 8,843 | 99.53% | 84.33% |
 
 The routing split is informative in itself: 84% of DALL·E 3 images take the shallow branch while only 18% of COCO photographs do. This matches how the two sets were produced — generator output is delivered as clean PNG, whereas COCO photographs have already been compressed and resized. The gate is reading the processing history, which is exactly what it was trained to do.
 
 ### Primary evaluation — NTIRE official splits
 
-Because a clean-versus-generator comparison is comparatively easy, we report our main results on the NTIRE official val and val_hard splits. These apply the competition's own degradation pipeline, which includes transformations our six training operators do not fully cover — so they measure behaviour under realistic distribution shift rather than under degradations we designed ourselves.
+All numbers are **held-out**. 70% of the official val set and 70% of val_hard were used in training; the split files ship with the weights (`v3/val_split_70_30.json`, `v3/valhard_split_70_30.json`) so the split can be verified independently. "Robust" — AUC on the degraded subset — is the competition's headline metric.
 
-| Data | Scheme | Overall | Clean AUC | Robust AUC |
-|---|---|---|---|---|
-| Official val held-out (3,000)<br>±SE 0.23 | shallow-only | **0.9922** | **0.9978** | **0.9833** |
-| | gated route | 0.9911 | 0.9977 | 0.9809 |
-| Official val_hard held-out (750)<br>±SE 1.8 | shallow-only | 0.9430 | **0.9904** | 0.8674 |
-| | gated route | 0.9423 | 0.9857 | **0.8781** |
+| Data | Scheme | ms/img | Overall | Clean AUC | Robust AUC |
+|---|---|---|---|---|---|
+| Official val held-out (3,000)<br>±SE 0.41 | single layer L37 + 1 MLP | 40.8 | 0.9646 | 0.9739 | 0.9539 |
+| | single layer L27 + 1 MLP | 30.2 | 0.9887 | 0.9948 | 0.9801 |
+| | **DUET** | 33.5 | **0.9911** | **0.9977** | **0.9809** |
+| Official val_hard held-out (750)<br>±SE 0.82 | single layer L37 + 1 MLP | 40.8 | 0.8613 | 0.8906 | 0.8319 |
+| | single layer L27 + 1 MLP | 30.2 | 0.9206 | 0.9744 | 0.8513 |
+| | **DUET** | 33.5 | **0.9423** | **0.9857** | **0.8781** |
 
-"Degraded" is the competition's headline metric.
 
-**Uniform fusion beats the best single expert** by +3.39 / +1.67 points (shallow / deep) on official val, and +5.89 / +1.74 on the hard split. The experts are not making identical errors — averaging their logits reduces variance.
-
-**Early exit costs nothing.** Staged inference is numerically identical to a full forward pass (max absolute difference = 0 across all six taps). On the official val set the gate marks ~60% of images clean, for a measured **19.7% reduction in forward depth**.
-
-**We did not hand-pick the tap layers.** A linear probe was fitted to every block, candidate triples were scored by rank-averaged AUC, and a permutation test checked them against randomly constructed alternatives.
 ## Quick start
 
 ```bash
