@@ -238,7 +238,7 @@ if __name__ == "__main__":
     import numpy as np
 
     torch.manual_seed(0)
-    H = 1280                                    # DINOv3 ViT-H+/16
+    H = 1536                                    # DINOv2 ViT-g/14                                
     bank = ExpertBank(hidden_size=H)
 
     print("--- 决策 5:同类同超参,只有 in_dim 因池化而异 ---")
