@@ -1,8 +1,8 @@
-"""把整个数据集过一遍冻结的 DINOv3,把逐层特征落盘。
+"""把整个数据集过一遍冻结的 DINO backbone，把逐层特征落盘。
 
 用法:
     python cache_features.py --manifest data/manifest.csv --out cache/probe          # 全 33 层
-    python cache_features.py --manifest data/manifest.csv --out cache/train --layers 20,24,28
+    python cache_features.py --manifest data/manifest.csv --out cache/train --layers 14,21,27
     python cache_features.py --manifest data/manifest.csv --out cache/smoke --limit 32
 
 manifest 至少要有三样东西,列名自动识别(见 COLUMN_ALIASES):
@@ -13,7 +13,7 @@ manifest 至少要有三样东西,列名自动识别(见 COLUMN_ALIASES):
 可选: generator / split / image_id
 
 输出:
-    cache/xxx/features.npy   (M, L, D) fp16   L=层数, D=池化维度(cls+mean+std -> 3*1280)
+    /cache/xxx/features.npy   (M, L, D) fp16   D=3H for cls+mean+std pooling
             /prenorm.npy    (M, L, 2) fp32   归一化前的 patch 范数 均值/标准差
             /meta.csv       M 行, 行号即 features 的第一维下标
             /config.json    出处指纹, 防止不同配置的缓存被混用
@@ -59,12 +59,12 @@ from utils.deg_taxonomy import (  # noqa: E402
     TAXONOMY_NAME,
 )
 
-EXPECT_SIZE = 512     # 数据集已统一到 512x512
+EXPECT_SIZE = 504     # 数据集已统一到 512x512
 
 # 按设备的默认 batch。MPS 上实测 batch 越大越慢(1.19 / 1.25 / 1.44 / 2.09 s/图,
 # 对应 batch 1/4/8/16):output_hidden_states=True 要把 33 层全留在内存,batch=16 时
 # 光 hidden_states 就 ~1.4 GB,在统一内存上直接压出带宽瓶颈。独显没这个问题,可调大。
-DEFAULT_BATCH = {"mps": 1, "cuda": 16, "cpu": 4}
+DEFAULT_BATCH = {"mps": 1, "cuda": 8, "cpu": 4}
 
 COLUMN_ALIASES = {
     "path": ["path", "filepath", "file", "image", "image_path", "filename"],
@@ -256,12 +256,19 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True, help="缓存输出目录")
     ap.add_argument("--root", default=".", help="manifest 里相对路径的基准目录")
     ap.add_argument("--model", default=DEFAULT_MODEL)
-    ap.add_argument("--layers", default="all",
-                    help='"all" 或逗号分隔。训练阶段用探针定下的三层 "20,24,28" '
-                         '(见 models/dinov3.py 的 PROBE_BANDS)')
-    ap.add_argument("--crop-size", type=int, default=None,
-                    help=f"中心裁剪的边长,须为 backbone 的 patch_size 整数倍。"
-                         f"默认 {'{}'} —— 但 DINOv2 是 patch 14,512 不整除,要传 504")
+    ap.add_argument(
+    "--layers",
+    default="all",
+    help='"all" or comma-separated layers. Released shallow bank: '
+         '"14,21,27"; released deep bank: "26,33,37"',
+)
+ap.add_argument(
+    "--crop-size",
+    type=int,
+    default=None,
+    help=f"Center-crop size; must be divisible by the backbone patch size. "
+         f"Default: {EXPECT_SIZE}",
+)
     ap.add_argument("--pool", default="cls+mean+std", choices=["cls", "cls+mean", "cls+mean+std", "mean+std"])
     ap.add_argument("--batch-size", type=int, default=None,
                     help="默认按设备决定(见 DEFAULT_BATCH)。MPS 上实测 batch=1 最快")
