@@ -10,10 +10,8 @@
 
 因此 preprocess 的纪律 1/2/3/4/6(存 PNG、确定性、跳过产物、归一化顺序)在这里
 **全部不适用** —— 没有像素被改动。仍然成立的只有两条:
-
-  * 纪律 5(不 resize):图**原样**喂给 cache_features,由 DINOv3Preprocessor 做原生
-    512 center crop。绝不能为了对齐尺寸去缩放 —— downscale / pixelate / randomcrop
-    这几维的证据正是重采样痕迹,再缩一次就洗掉了。
+  * 纪律 5（不 resize）：图片原样交给 backbone preprocessor，使用 504×504
+    center crop。不能额外缩放，否则会破坏重采样与生成器痕迹。
   * 纪律 7(划分不能泄漏):这里比 preprocess 简单 —— NTIRE 的干净图与退化图是
     **不同的图**,不存在「同一源图的干净版/退化版」配对,所以按 image_name 哈希划分
     就够了,不需要源图分组。这一点脚本会显式核验(见输出的「配对检查」)。
