@@ -38,6 +38,8 @@ We used fixed image-level 70/30 splits for both official val and val_hard. Only 
 | | **shallow committee [14,21,27]** | 27 | 30.2 | **0.9430** | **0.9904** | 0.8674 |
 | | gated route — DUET | 27 or 37 | 33.5 | 0.9423 | 0.9857 | **0.8781** |
 
+*Latency was measured on a single NVIDIA A100 GPU with batch size 8 and BF16 inference at 504×504 resolution. Timing includes model preprocessing and forward inference, but excludes image decoding and disk I/O.*
+
 ### What the ablation shows
 
 **Depth is not monotonic.** On both held-out splits, the single-layer L37 baseline is less accurate than single-layer L27 despite being deeper and slower. Reading the final available block is therefore a design choice rather than a reliable default.
