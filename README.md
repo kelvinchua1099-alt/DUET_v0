@@ -135,6 +135,49 @@ Unreadable files (truncated downloads, mislabelled extensions) are skipped, logg
 `<out>.failed`, and still get a JSON row with `pred: 0.5` — abstention — so the entry count
 always matches the input directory.
 
+## Building the Jamlai Dataset
+
+We designed the Jamlai Dataset around three principles: **data diversity, format-aware preprocessing, and augmentation robustness**.
+
+### Diverse source data
+
+We assembled a candidate pool of **200,000 source images** from three complementary datasets:
+
+ Real | AI-generated | Generator coverage 
+
+ **100k+** | **100k+** | **40+** 
+
+SID_Set contributes controlled FLUX-generated examples, while our filtered WildFake subset adds GigaGAN, Imagen, Midjourney, and three Stable Diffusion families. NTIRE substantially broadens this generator landscape: its full challenge spans 42 generator types, helping us avoid building a detector around the fingerprints of only one generation pipeline.
+
+From this candidate pool, the current DUET training pipeline uses **140,438 unique source images**.
+
+### Disentangling the formats and labels
+
+We identified a dangerous shortcut in SID_Set: real images were stored as JPEG files, whereas synthetic images were stored as PNG files. Without correction, a detector could learn compression history instead of distinguishing real and AI-generated content.
+
+We therefore analysed **26,131 real JPEG images** and observed **2,431 distinct full JPEG profiles**. A profile was treated as one joint encoding configuration, including quantization tables, component-to-table mappings, chroma subsampling, progressive mode, and related coding metadata.
+
+Rather than converting every synthetic image with one fixed JPEG quality, we assigned complete profiles to **27,380 synthetic PNG masters** in proportion to their frequencies in the real-image distribution and encoded them accordingly. The resulting synthetic-profile distribution achieved a total-variation distance of **0.0061** from the SID real-image reference distribution.
+
+This build-time profile matching is separate from training-time JPEG augmentation: the first reduces a format–label shortcut, while the second improves robustness to later recompression.
+
+### Resolution and transformation augmentation
+
+We preserved the original source masters and filtered images large enough to support a 512 × 512 model input. NTIRE images require both dimensions to be greater than 512 pixels, while SID_Set and WildFake use a minimum short edge of 512 pixels.
+
+For training, every selected source produces one clean view and one degraded view, resulting in **280,876 rows**. Each degraded view receives between one and three label-preserving operations from six transformation families:
+
+- JPEG compression;
+- Gaussian blur;
+- resizing;
+- cropping;
+- Gaussian noise;
+- colour jitter.
+
+The same augmentation policy is applied to real and AI-generated images. Operations follow a fixed order, with blur applied before noise and JPEG compression applied last. We also model resolution shift by downsampling a controlled subset below 512 pixels and restoring it to 512 × 512.
+
+Finally, all splits are grouped by source image so that a clean image and its degraded counterpart can never appear in different splits. We additionally keep a separate 2,500-image hard validation set outside the layer-selection process.
+
 
 ## Limitations
 
